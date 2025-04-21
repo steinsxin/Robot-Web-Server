@@ -1,0 +1,16 @@
+### Hello SteinXin ###
+GET http://127.0.0.1:3000/hello/steinsin
+
+### Create Robot ###
+POST http://127.0.0.1:3000/create/Robot
+Content-Type: application/json
+
+{
+    "robot_id": "Robot-003",
+    "device_id": "6ab565387a4c5e2f",
+    "electricity": 50,
+    "activate": false
+}
+
+### Get Robot ###
+GET http://127.0.0.1:3000/query/Robot
