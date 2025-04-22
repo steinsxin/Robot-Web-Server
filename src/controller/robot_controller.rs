@@ -1,10 +1,11 @@
+use crate::schema::robot_manager;
 use diesel::prelude::*;
 use diesel::Queryable;
-use crate::schema::robot_manager;
 use chrono::{NaiveDateTime};
 use serde::{Serialize, Deserialize};
 
 #[derive(Queryable ,Serialize, Deserialize)]
+#[diesel(table_name = robot_manager)]
 pub struct Robot {
     pub id: i32,
     pub robot_id: String,
