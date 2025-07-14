@@ -1,5 +1,5 @@
 mod tcp_server;
-use tcp_server::TcpServer;
+use tcp_server::{TcpServer, ActiveIps, RobotIpMap};
 
 mod db;
 use std::sync::Arc;
@@ -9,13 +9,12 @@ use axum::{
     routing::get,
     Router,
     response::Html, 
-    extract::Path,
+    extract::{Path, State},
     Json, 
 };
 
 use serde::Serialize;
 use std::net::SocketAddr;
-
 // db Test
 mod schema;
 mod models;
@@ -40,8 +39,6 @@ pub fn get_posts(conn: &mut PgConnection) -> Vec<Post> {
         .expect("Error loading posts")
 }
 
-pub type ActiveIps = Arc<Mutex<HashMap<IpAddr, std::time::Instant>>>;
-
 // 定义数据结构
 #[derive(Serialize)]
 struct User {
@@ -55,6 +52,11 @@ struct RobotData {
     robot_id: String,
     electricity: String,
     activate: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RobotIpRequest {
+    robot_id: String,
 }
 
 #[tokio::main]
@@ -71,9 +73,10 @@ async fn main() {
     
     // 初始化活跃IP记录表
     let active_ips: ActiveIps = Arc::new(Mutex::new(HashMap::new()));
+    let robot_ip_map: RobotIpMap = Arc::new(Mutex::new(HashMap::new()));
 
     // 启动 TCP Server（例如端口4000，类型为 Data）
-    let tcp_server = TcpServer::new(1034, conn_arc.clone(), active_ips.clone());
+    let tcp_server = TcpServer::new(1034, conn_arc.clone(), active_ips.clone(), robot_ip_map.clone());
     tcp_server.start();
 
     // 启动 Axum HTTP Server
@@ -82,6 +85,8 @@ async fn main() {
         .route("/hello/:name", get(hello_handler))
         .route("/user", get(user_handler))
         .route("/robot_manage", axum::routing::post(robot_manage_handler))
+        .route("/get_robot_ip", axum::routing::post(get_robot_ip))
+        .with_state(robot_ip_map.clone())
         .nest("/api", api_routes());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -95,6 +100,18 @@ async fn main() {
 async fn robot_manage_handler(Json(payload): Json<RobotData>) -> String {
     println!("🤖 Received robot manage POST: {:?}", payload);
     format!("Received robot_id: {}, electricity: {}, activate: {}", payload.robot_id, payload.electricity, payload.activate)
+}
+
+async fn get_robot_ip(
+    State(robot_ip_map): State<RobotIpMap>,
+    Json(payload): Json<RobotIpRequest>,
+) -> String {
+    let map = robot_ip_map.lock().await;
+    if let Some(ip) = map.get(&payload.robot_id) {
+        ip.to_string()
+    } else {
+        "Not found".to_string()
+    }
 }
 
 // API子路由

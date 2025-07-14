@@ -10,20 +10,23 @@ use crate::db::{update_robot_status, parse_robot_payload};
 use std::time::{Instant, Duration};
 
 pub type ActiveIps = Arc<Mutex<HashMap<IpAddr, std::time::Instant>>>;
+pub type RobotIpMap = Arc<Mutex<HashMap<String, IpAddr>>>;
 
 #[derive(Clone)]
 pub struct TcpServer {
     pub tcp_port: u16,
     pub conn: Arc<Mutex<PgConnection>>,
     pub active_ips: ActiveIps,
+    pub robot_ip_map: RobotIpMap, // 👈 新增
 }
 
 impl TcpServer {
-    pub fn new(tcp_port: u16, conn: Arc<Mutex<PgConnection>>, active_ips: ActiveIps) -> Self {
+    pub fn new(tcp_port: u16, conn: Arc<Mutex<PgConnection>>, active_ips: ActiveIps, robot_ip_map: RobotIpMap) -> Self {
         Self {
             tcp_port,
             conn,
             active_ips,
+            robot_ip_map
         }
     }
 
@@ -31,6 +34,7 @@ impl TcpServer {
         let port = self.tcp_port;
         let conn = self.conn.clone();
         let active_ips = self.active_ips.clone();
+        let robot_ip_map = self.robot_ip_map.clone();
 
         // 启动清理任务
         start_ip_cleanup_task(active_ips.clone());
@@ -52,6 +56,7 @@ impl TcpServer {
                             peer_addr,
                             conn.clone(),
                             active_ips.clone(),
+                            robot_ip_map.clone()
                         ));
                     }
                     Err(e) => {
@@ -95,7 +100,8 @@ async fn handle_connection(
     peer_addr: SocketAddr,
     conn: Arc<Mutex<PgConnection>>,
     active_ips: ActiveIps,
-) {
+    robot_ip_map: RobotIpMap, // 👈 新增
+){
     let mut buffer = [0u8; 1024];
     let ip = peer_addr.ip();
 
@@ -118,6 +124,11 @@ async fn handle_connection(
                     println!("[TCP] Received text: {}", text);
 
                     if let Some((id, elec, act)) = parse_robot_payload(text) {
+                        {
+                            let mut map = robot_ip_map.lock().await;
+                            map.insert(id.clone(), ip);  // 更新robot_id对应的IP地址
+                        }
+                    
                         let mut conn_guard = conn.lock().await;
                         match update_robot_status(&mut conn_guard, &id, elec, act) {
                             Ok(_) => println!("✅ Updated robot {} in DB", id),
