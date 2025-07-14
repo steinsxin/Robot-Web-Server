@@ -4,9 +4,9 @@ Cargo Watch (cargo install cargo-watch)
 Systemfd (cargo install systemfd)
 
 
-
-export DATABASE_URL=postgres://postgres:1@localhost/postgres
-set DATABASE_URL=postgres://postgres:1@localhost/postgres
+# 设置 DATABASE_URL
+export DATABASE_URL=postgres://postgres:1@localhost/postgres    # Linux
+set DATABASE_URL=postgres://postgres:1@localhost/postgres       # Windows
 diesel setup
 
 # 创建迁移文件
@@ -33,4 +33,3 @@ diesel migration run
 
 # pqsl插入数据
 psql -h localhost -U postgres -d postgres -f data.sql
-
