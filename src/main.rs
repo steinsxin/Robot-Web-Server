@@ -1,10 +1,10 @@
 mod tcp_server;
-use tcp_server::{TcpServer, ActiveIps, RobotIpMap};
+use tcp_server::{TcpServer, ActiveIps, RobotIpMap, RobotConnMap};
 
 mod db;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
+use tokio::io::AsyncWriteExt;
 use axum::{
     routing::get,
     Router,
@@ -47,11 +47,22 @@ struct User {
     email: String,
 }
 
+#[derive(Clone)]
+struct AppState {
+    robot_ip_map: RobotIpMap,
+    robot_conn_map: RobotConnMap,
+}
+
 #[derive(Debug, Deserialize)]
 struct RobotData {
     robot_id: String,
     electricity: String,
     activate: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RobotIdentify {
+    robot_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,9 +85,15 @@ async fn main() {
     // 初始化活跃IP记录表
     let active_ips: ActiveIps = Arc::new(Mutex::new(HashMap::new()));
     let robot_ip_map: RobotIpMap = Arc::new(Mutex::new(HashMap::new()));
+    let robot_conn_map: RobotConnMap = Arc::new(Mutex::new(HashMap::new()));
+    
+    let state = AppState {
+        robot_ip_map: robot_ip_map.clone(),
+        robot_conn_map: robot_conn_map.clone(),
+    };
 
     // 启动 TCP Server（例如端口4000，类型为 Data）
-    let tcp_server = TcpServer::new(1034, conn_arc.clone(), active_ips.clone(), robot_ip_map.clone());
+    let tcp_server = TcpServer::new(1034, conn_arc.clone(), active_ips.clone(), robot_ip_map.clone(), robot_conn_map.clone());
     tcp_server.start();
 
     // 启动 Axum HTTP Server
@@ -86,7 +103,7 @@ async fn main() {
         .route("/user", get(user_handler))
         .route("/robot_manage", axum::routing::post(robot_manage_handler))
         .route("/get_robot_ip", axum::routing::post(get_robot_ip))
-        .with_state(robot_ip_map.clone())
+        .with_state(Arc::new(state))
         .nest("/api", api_routes());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -97,23 +114,36 @@ async fn main() {
 }
 
 // 机器人调度
-async fn robot_manage_handler(Json(payload): Json<RobotData>) -> String {
-    println!("🤖 Received robot manage POST: {:?}", payload);
-    format!("Received robot_id: {}, electricity: {}, activate: {}", payload.robot_id, payload.electricity, payload.activate)
+async fn robot_manage_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RobotIdentify>,
+) -> String {
+    println!("🤖 Received robot_id: {:?}", payload.robot_id);
+
+    let mut map = state.robot_conn_map.lock().await;
+    if let Some(conn) = map.get(&payload.robot_id) {
+        let mut stream = conn.lock().await;
+        let message = b"hello robot";
+        if let Err(e) = stream.write_all(message).await {
+            return format!("❌ Failed to send data: {}", e);
+        }
+        return format!("✅ Data sent to robot {}", payload.robot_id);
+    }else {
+        return format!("❌ robot_id {} not connected", payload.robot_id);
+    }
 }
 
 async fn get_robot_ip(
-    State(robot_ip_map): State<RobotIpMap>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<RobotIpRequest>,
 ) -> String {
-    let map = robot_ip_map.lock().await;
+    let map = state.robot_ip_map.lock().await;
     if let Some(ip) = map.get(&payload.robot_id) {
         ip.to_string()
     } else {
         "Not found".to_string()
     }
 }
-
 // API子路由
 fn api_routes() -> Router {
     Router::new()

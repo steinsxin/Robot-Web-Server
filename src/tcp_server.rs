@@ -11,22 +11,25 @@ use std::time::{Instant, Duration};
 
 pub type ActiveIps = Arc<Mutex<HashMap<IpAddr, std::time::Instant>>>;
 pub type RobotIpMap = Arc<Mutex<HashMap<String, IpAddr>>>;
+pub type RobotConnMap = Arc<Mutex<HashMap<String, Arc<Mutex<TcpStream>>>>>;
 
 #[derive(Clone)]
 pub struct TcpServer {
     pub tcp_port: u16,
     pub conn: Arc<Mutex<PgConnection>>,
     pub active_ips: ActiveIps,
-    pub robot_ip_map: RobotIpMap, // 👈 新增
+    pub robot_ip_map: RobotIpMap,
+    pub robot_conn_map: RobotConnMap, // 👈 新增
 }
 
 impl TcpServer {
-    pub fn new(tcp_port: u16, conn: Arc<Mutex<PgConnection>>, active_ips: ActiveIps, robot_ip_map: RobotIpMap) -> Self {
+    pub fn new(tcp_port: u16, conn: Arc<Mutex<PgConnection>>, active_ips: ActiveIps, robot_ip_map: RobotIpMap, robot_conn_map: RobotConnMap) -> Self {
         Self {
             tcp_port,
             conn,
             active_ips,
-            robot_ip_map
+            robot_ip_map,
+            robot_conn_map, // 👈 别忘了传入
         }
     }
 
@@ -35,6 +38,7 @@ impl TcpServer {
         let conn = self.conn.clone();
         let active_ips = self.active_ips.clone();
         let robot_ip_map = self.robot_ip_map.clone();
+        let robot_conn_map = self.robot_conn_map.clone();
 
         // 启动清理任务
         start_ip_cleanup_task(active_ips.clone());
@@ -56,7 +60,8 @@ impl TcpServer {
                             peer_addr,
                             conn.clone(),
                             active_ips.clone(),
-                            robot_ip_map.clone()
+                            robot_ip_map.clone(),
+                            robot_conn_map.clone()
                         ));
                     }
                     Err(e) => {
@@ -100,24 +105,27 @@ async fn handle_connection(
     peer_addr: SocketAddr,
     conn: Arc<Mutex<PgConnection>>,
     active_ips: ActiveIps,
-    robot_ip_map: RobotIpMap, // 👈 新增
+    robot_ip_map: RobotIpMap,
+    robot_conn_map: RobotConnMap, 
 ){
     let mut buffer = [0u8; 1024];
     let ip = peer_addr.ip();
+    let shared_stream = Arc::new(Mutex::new(stream)); // ✅ 封装后就可以 clone 了
 
     loop {
-        match stream.read(&mut buffer).await {
+        let mut stream_guard = shared_stream.lock().await; // 🔓 加锁拿到可用 stream
+        match stream_guard.read(&mut buffer).await {
             Ok(0) => {
                 println!("[TCP] Client {} disconnected", peer_addr);
                 break;
             }
             Ok(n) => {
-                let data = &buffer[..n];
+                drop(stream_guard); // ✅ 提前释放锁，避免后续死锁
 
-                // 记录 IP 活跃时间
+                let data = &buffer[..n];
                 {
                     let mut map = active_ips.lock().await;
-                    map.insert(ip, Instant::now());
+                    map.insert(ip, std::time::Instant::now());
                 }
 
                 if let Ok(text) = std::str::from_utf8(data) {
@@ -125,10 +133,15 @@ async fn handle_connection(
 
                     if let Some((id, elec, act)) = parse_robot_payload(text) {
                         {
-                            let mut map = robot_ip_map.lock().await;
-                            map.insert(id.clone(), ip);  // 更新robot_id对应的IP地址
+                            let mut ip_map = robot_ip_map.lock().await;
+                            ip_map.insert(id.clone(), peer_addr.ip());
                         }
-                    
+
+                        {
+                            let mut conn_map = robot_conn_map.lock().await;
+                            conn_map.insert(id.clone(), shared_stream.clone()); // ✅ 不 move，clone Arc 即可
+                        }
+
                         let mut conn_guard = conn.lock().await;
                         match update_robot_status(&mut conn_guard, &id, elec, act) {
                             Ok(_) => println!("✅ Updated robot {} in DB", id),
@@ -137,8 +150,9 @@ async fn handle_connection(
                     }
                 }
 
-                // 回发数据
-                if let Err(e) = stream.write_all(data).await {
+                // 回发原始数据
+                let mut stream_guard = shared_stream.lock().await;
+                if let Err(e) = stream_guard.write_all(data).await {
                     eprintln!("[TCP] Write error: {}", e);
                     break;
                 }
