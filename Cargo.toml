@@ -1,24 +1,15 @@
 [package]
-name = "Robot_Web_Server"
+name = "robot_web_server"  # 改为蛇形命名
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 axum = "0.7"
-hex = "0.4"
-chrono = { version = "0.4", features = ["serde"] }
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-hyper = { version = "0.14", features = ["full"] }
 serde_json = "1.0"
-bb8 = "0.8"
-diesel = { version = "2.1.0", features = [
-    "postgres",
-    "chrono",
-    "uuid",
-    "serde_json",
-    "r2d2",
-] }
+diesel = { version = "2.1.0", features = ["postgres", "chrono", "r2d2"] }
+diesel_migrations = "2.1.0"
+chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-diesel-async = { version = "0.5", features = ["postgres", "bb8"] }
-listenfd = "0.3"
+anyhow = "1.0"

@@ -1,16 +1,25 @@
+use diesel::pg::PgConnection;
+use diesel::r2d2::{ConnectionManager, Pool};
+use crate::models::post::Post;
+use crate::models::robot::{RobotManager, UpdateRobot, RobotPayload};
+use crate::schema::{posts, robot_manager};
 use diesel::prelude::*;
-use crate::schema::robot_manager::dsl::*;
-use diesel::PgConnection;
-use chrono::Local;
 use chrono::Utc;
-use crate::models::UpdateRobot;
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
-pub struct RobotPayload {
-    pub robot_id: String,
-    pub electricity: String,
-    pub activate: String,
+pub type DbPool = Pool<ConnectionManager<PgConnection>>;
+
+pub fn create_db_pool(database_url: &str) -> DbPool {
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    Pool::builder()
+        .build(manager)
+        .expect("Failed to create database pool")
+}
+
+pub fn get_posts(conn: &mut PgConnection) -> Vec<Post> {
+    posts::table
+        .filter(posts::published.eq(true))
+        .load::<Post>(conn)
+        .expect("Error loading posts")
 }
 
 pub fn update_robot_status(
@@ -25,7 +34,7 @@ pub fn update_robot_status(
         updated_at: Some(Utc::now().naive_utc()),
     };
 
-    diesel::update(robot_manager.filter(robot_id.eq(target_robot_id)))
+    diesel::update(robot_manager::table.filter(robot_manager::robot_id.eq(target_robot_id)))
         .set(&updated)
         .execute(conn)
 }
